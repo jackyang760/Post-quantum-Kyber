@@ -166,22 +166,30 @@ void gen_matrix(polyvec *a, const uint8_t seed[KYBER_SYMBYTES], int transposed)
 {
   unsigned int ctr, i, j;
   unsigned int buflen;
+
   uint8_t buf[GEN_MATRIX_NBLOCKS*XOF_BLOCKBYTES];
-  xof_state state;
+
+  uint8_t extseed[KYBER_SYMBYTES+3]; 
+  memcpy(extseed, seed, KYBER_SYMBYTES); 
 
   for(i=0;i<KYBER_K;i++) {
-    for(j=0;j<KYBER_K;j++) {
-      if(transposed)
-        xof_absorb(&state, seed, i, j);
-      else
-        xof_absorb(&state, seed, j, i);
-
-      xof_squeezeblocks(buf, GEN_MATRIX_NBLOCKS, &state);
+    for(j=0;j<KYBER_K;j++) {  
+      if(transposed){
+        extseed[KYBER_SYMBYTES] = i; 
+        extseed[KYBER_SYMBYTES + 1] = j; 
+      } else {
+        extseed[KYBER_SYMBYTES] = j;
+        extseed[KYBER_SYMBYTES + 1] = i;
+      }
+      extseed[KYBER_SYMBYTES + 2] = 0; // 第34字节为计数器（初始为0）
+      xof_ascon(buf, GEN_MATRIX_NBLOCKS*XOF_BLOCKBYTES, extseed, KYBER_SYMBYTES + 3);// 使用扩展种子调用SM3-XOF
       buflen = GEN_MATRIX_NBLOCKS*XOF_BLOCKBYTES;
+      
       ctr = rej_uniform(a[i].vec[j].coeffs, KYBER_N, buf, buflen);
 
       while(ctr < KYBER_N) {
-        xof_squeezeblocks(buf, 1, &state);
+        extseed[KYBER_SYMBYTES + 2]++;
+        xof_ascon(buf, XOF_BLOCKBYTES, extseed, KYBER_SYMBYTES + 3);
         buflen = XOF_BLOCKBYTES;
         ctr += rej_uniform(a[i].vec[j].coeffs + ctr, KYBER_N - ctr, buf, buflen);
       }
