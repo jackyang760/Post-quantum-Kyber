@@ -121,23 +121,44 @@ void poly_decompress(poly *r, const uint8_t a[KYBER_POLYCOMPRESSEDBYTES])
 *                            (needs space for KYBER_POLYBYTES bytes)
 *              - const poly *a: pointer to input polynomial
 **************************************************/
-void poly_tobytes(uint8_t r[KYBER_POLYBYTES], const poly *a)
+void poly_tobytes_pk(uint8_t r[KYBER_POLYBYTES], const poly *a)
 {
   unsigned int i;
   uint16_t t0, t1;
 
   for(i=0;i<KYBER_N/2;i++) {
     // map to positive standard representatives
-    t0  = a->coeffs[2*i];
-    t0 += ((int16_t)t0 >> 15) & KYBER_Q;
-    t1 = a->coeffs[2*i+1];
-    t1 += ((int16_t)t1 >> 15) & KYBER_Q;
-    r[3*i+0] = (t0 >> 0);
-    r[3*i+1] = (t0 >> 8) | (t1 << 4);
-    r[3*i+2] = (t1 >> 4);
+    t0 = a->coeffs[2*i];// 系数1：12位
+    t0 += ((int16_t)t0 >> 15) & KYBER_Q;// 系数转换为 [0, 3328] 的非负整数。
+    t1 = a->coeffs[2*i+1];// 系数2：12位
+    t1 += ((int16_t)t1 >> 15) & KYBER_Q;// 系数转换为 [0, 3328] 的非负整数。
+    r[3*i+0] = (t0 >> 0);// 取 t0 的 低8位（第0~7位）
+    r[3*i+1] = (t0 >> 8) | (t1 << 4);// 取 t0 的 高4位（第8~11位），放到当前字节的低4位位置（0000 xxxx），把 t1 的低4位（0000 xxxx）移动到当前字节的高4位（xxxx 0000）于是，这一字节组成结构为：[t1 的低4位][t0 的高4位]
+    r[3*i+2] = (t1 >> 4); // 取 t1 的高8位，即丢掉前面已经打包进上一字节的低4位，保留 t1 的高位
   }
 }
 
+void poly_tobytes_sk(uint8_t r[SMALL_POLYBYTES], const poly *a) {
+  uint32_t buffer = 0;
+  int bit_pos = 0;
+  uint8_t *ptr = r;
+
+  for (int i = 0; i < KYBER_N; i++) {
+      uint8_t x = (a->coeffs[i] + 3) & 0x07; // 转换到 0-6
+      buffer |= (x << bit_pos);
+      bit_pos += 3;
+
+      while (bit_pos >= 8) { // 当有足够字节可写入
+          *ptr++ = buffer & 0xFF;
+          buffer >>= 8;
+          bit_pos -= 8;
+      }
+  }
+
+  if (bit_pos > 0) {
+      *ptr++ = buffer & 0xFF; // 写入剩余部分（低8位）
+  }
+}
 /*************************************************
 * Name:        poly_frombytes
 *
@@ -148,12 +169,31 @@ void poly_tobytes(uint8_t r[KYBER_POLYBYTES], const poly *a)
 *              - const uint8_t *a: pointer to input byte array
 *                                  (of KYBER_POLYBYTES bytes)
 **************************************************/
-void poly_frombytes(poly *r, const uint8_t a[KYBER_POLYBYTES])
+void poly_frombytes_pk(poly *r, const uint8_t a[KYBER_POLYBYTES])
 {
   unsigned int i;
   for(i=0;i<KYBER_N/2;i++) {
     r->coeffs[2*i]   = ((a[3*i+0] >> 0) | ((uint16_t)a[3*i+1] << 8)) & 0xFFF;
     r->coeffs[2*i+1] = ((a[3*i+1] >> 4) | ((uint16_t)a[3*i+2] << 4)) & 0xFFF;
+  }
+}
+
+void poly_frombytes_sk(poly *r, const uint8_t a[SMALL_POLYBYTES]) {
+  uint32_t buffer = 0;
+  int bit_pos = 0;
+  int bytes_read = 0; // 已读取字节数
+
+  for (int i = 0; i < KYBER_N; i++) {
+      if (bit_pos < 3) { // 需要加载新字节
+          buffer |= (a[bytes_read++] << bit_pos);
+          bit_pos += 8;
+      }
+
+      uint8_t x = buffer & 0x07;
+      r->coeffs[i] = (int16_t)x - 3;
+
+      buffer >>= 3;
+      bit_pos -= 3;
   }
 }
 

@@ -1,5 +1,7 @@
 {
     "files.associations": {
-        "permutations.h": "c"
+        "permutations.h": "c",
+        "symmetric.h": "c",
+        "polyvec.h": "c"
     }
 }

@@ -7,6 +7,18 @@
 #include "verify.h"
 #include "symmetric.h"
 #include "randombytes.h"
+
+#include <stdio.h>
+
+// void print_buf_prefix(const uint8_t *buf, size_t len) {
+//   printf("前 %zu 个字节的值：\n", len);
+//   for (size_t i = 0; i < len; i++) {
+//       printf("%02x ", buf[i]);  // 以十六进制格式打印
+//       if ((i + 1) % 16 == 0) printf("\n");  // 每行显示 16 个字节
+//   }
+//   printf("\n");
+// }
+
 /*************************************************
 * Name:        crypto_kem_keypair_derand
 *
@@ -27,10 +39,10 @@ int crypto_kem_keypair_derand(uint8_t *pk,
                               const uint8_t *coins)
 {
   indcpa_keypair_derand(pk, sk, coins);
-  memcpy(sk+KYBER_INDCPA_SECRETKEYBYTES, pk, KYBER_PUBLICKEYBYTES);
-  hash_h(sk+KYBER_SECRETKEYBYTES-2*KYBER_SYMBYTES, pk, KYBER_PUBLICKEYBYTES);
+  memcpy(sk+SMALL_POLYVECBYTES, pk, KYBER_PUBLICKEYBYTES);
+  hash_h(sk+SMALL_SECRETKEYBYTES-2*KYBER_SYMBYTES, pk, KYBER_PUBLICKEYBYTES);
   /* Value z for pseudo-random output on reject */
-  memcpy(sk+KYBER_SECRETKEYBYTES-KYBER_SYMBYTES, coins+KYBER_SYMBYTES, KYBER_SYMBYTES);
+  memcpy(sk+SMALL_SECRETKEYBYTES-KYBER_SYMBYTES, coins+KYBER_SYMBYTES, KYBER_SYMBYTES);
   return 0;
 }
 
@@ -87,6 +99,9 @@ int crypto_kem_enc_derand(uint8_t *ct,
   /* Multitarget countermeasure for coins + contributory KEM */
   hash_h(buf+KYBER_SYMBYTES, pk, KYBER_PUBLICKEYBYTES);
   hash_g(kr, buf, 2*KYBER_SYMBYTES);
+
+  // printf("加密明文\n");
+  // print_buf_prefix(buf, 32);
 
   /* coins are in kr+KYBER_SYMBYTES */
   indcpa_enc(ct, buf, pk, kr+KYBER_SYMBYTES);
@@ -147,12 +162,15 @@ int crypto_kem_dec(uint8_t *ss,
   uint8_t kr[2*KYBER_SYMBYTES];
 //  uint8_t cmp[KYBER_CIPHERTEXTBYTES+KYBER_SYMBYTES];
   uint8_t cmp[KYBER_CIPHERTEXTBYTES];
-  const uint8_t *pk = sk+KYBER_INDCPA_SECRETKEYBYTES;
+  const uint8_t *pk = sk+SMALL_INDCPA_SECRETKEYBYTES;
 
   indcpa_dec(buf, ct, sk);
 
+  // printf("解密明文\n");
+  // print_buf_prefix(buf, 32);
+
   /* Multitarget countermeasure for coins + contributory KEM */
-  memcpy(buf+KYBER_SYMBYTES, sk+KYBER_SECRETKEYBYTES-2*KYBER_SYMBYTES, KYBER_SYMBYTES);
+  memcpy(buf+KYBER_SYMBYTES, sk+SMALL_SECRETKEYBYTES-2*KYBER_SYMBYTES, KYBER_SYMBYTES);
   hash_g(kr, buf, 2*KYBER_SYMBYTES);
 
   /* coins are in kr+KYBER_SYMBYTES */
@@ -161,7 +179,7 @@ int crypto_kem_dec(uint8_t *ss,
   fail = verify(ct, cmp, KYBER_CIPHERTEXTBYTES);
 
   /* Compute rejection key */
-  rkprf(ss,sk+KYBER_SECRETKEYBYTES-KYBER_SYMBYTES,ct);
+  rkprf(ss,sk+SMALL_SECRETKEYBYTES-KYBER_SYMBYTES,ct);
 
   /* Copy true key to return buffer if fail is false */
   cmov(ss,kr,KYBER_SYMBYTES,!fail);

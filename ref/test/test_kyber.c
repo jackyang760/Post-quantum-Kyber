@@ -6,6 +6,16 @@
 
 #define NTESTS 1000
 
+// static void print_bytes(const char *label, const uint8_t *buf, size_t len) {
+//   printf("%s = ", label);
+//   for (size_t i = 0; i < len; i++) {
+//     printf("%02x", buf[i]);
+//     if ((i + 1) % 32 == 0) printf("\n");  // 每32字节换行
+//   }
+//   if (len % 32 != 0) printf("\n");
+//   printf("\n");
+// }
+
 static int test_keys(void)
 {
   uint8_t pk[CRYPTO_PUBLICKEYBYTES];
@@ -19,9 +29,11 @@ static int test_keys(void)
 
   //Bob derives a secret key and creates a response
   crypto_kem_enc(ct, key_b, pk);
+  // print_bytes("key_b", key_b, CRYPTO_BYTES);
 
   //Alice uses Bobs response to get her shared key
   crypto_kem_dec(key_a, ct, sk);
+  // print_bytes("key_a", key_a, CRYPTO_BYTES);
 
   if(memcmp(key_a, key_b, CRYPTO_BYTES)) {
     printf("ERROR keys\n");

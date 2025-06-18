@@ -14,10 +14,15 @@ void polyvec_compress(uint8_t r[KYBER_POLYVECCOMPRESSEDBYTES], const polyvec *a)
 #define polyvec_decompress KYBER_NAMESPACE(polyvec_decompress)
 void polyvec_decompress(polyvec *r, const uint8_t a[KYBER_POLYVECCOMPRESSEDBYTES]);
 
-#define polyvec_tobytes KYBER_NAMESPACE(polyvec_tobytes)
-void polyvec_tobytes(uint8_t r[KYBER_POLYVECBYTES], const polyvec *a);
-#define polyvec_frombytes KYBER_NAMESPACE(polyvec_frombytes)
-void polyvec_frombytes(polyvec *r, const uint8_t a[KYBER_POLYVECBYTES]);
+#define polyvec_tobytes_pk KYBER_NAMESPACE(polyvec_tobytes_pk)
+void polyvec_tobytes_pk(uint8_t r[KYBER_POLYVECBYTES], const polyvec *a);
+#define polyvec_frombytes_pk KYBER_NAMESPACE(polyvec_frombytes_pk)
+void polyvec_frombytes_pk(polyvec *r, const uint8_t a[KYBER_POLYVECBYTES]);
+
+#define polyvec_tobytes_sk KYBER_NAMESPACE(polyvec_tobytes_sk)
+void polyvec_tobytes_sk(uint8_t r[SMALL_POLYVECBYTES], const polyvec *a);
+#define polyvec_frombytes_sk KYBER_NAMESPACE(polyvec_frombytes_sk)
+void polyvec_frombytes_sk(polyvec *r, const uint8_t a[SMALL_POLYVECBYTES]);
 
 #define polyvec_ntt KYBER_NAMESPACE(polyvec_ntt)
 void polyvec_ntt(polyvec *r);

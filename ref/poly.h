@@ -17,10 +17,15 @@ void poly_compress(uint8_t r[KYBER_POLYCOMPRESSEDBYTES], const poly *a);
 #define poly_decompress KYBER_NAMESPACE(poly_decompress)
 void poly_decompress(poly *r, const uint8_t a[KYBER_POLYCOMPRESSEDBYTES]);
 
-#define poly_tobytes KYBER_NAMESPACE(poly_tobytes)
-void poly_tobytes(uint8_t r[KYBER_POLYBYTES], const poly *a);
-#define poly_frombytes KYBER_NAMESPACE(poly_frombytes)
-void poly_frombytes(poly *r, const uint8_t a[KYBER_POLYBYTES]);
+#define poly_tobytes_pk KYBER_NAMESPACE(poly_tobytes_pk)
+void poly_tobytes_pk(uint8_t r[KYBER_POLYBYTES], const poly *a);
+#define poly_frombytes_pk KYBER_NAMESPACE(poly_frombytes_pk)
+void poly_frombytes_pk(poly *r, const uint8_t a[KYBER_POLYBYTES]);
+
+#define poly_tobytes_sk KYBER_NAMESPACE(poly_tobytes_sk)
+void poly_tobytes_sk(uint8_t r[SMALL_POLYBYTES], const poly *a);
+#define poly_frombytes_sk KYBER_NAMESPACE(poly_frombytes_sk)
+void poly_frombytes_sk(poly *r, const uint8_t a[SMALL_POLYBYTES]);
 
 #define poly_frommsg KYBER_NAMESPACE(poly_frommsg)
 void poly_frommsg(poly *r, const uint8_t msg[KYBER_INDCPA_MSGBYTES]);
