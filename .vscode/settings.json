@@ -2,6 +2,7 @@
     "files.associations": {
         "permutations.h": "c",
         "symmetric.h": "c",
-        "polyvec.h": "c"
+        "polyvec.h": "c",
+        "poly.h": "c"
     }
 }

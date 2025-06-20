@@ -255,7 +255,7 @@ void indcpa_keypair_derand(uint8_t pk[KYBER_INDCPA_PUBLICKEYBYTES],
 
   polyvec_ntt_2(&skpv);
   // print_polyvec("skpv (ntt——1)", &skpv);
-  polyvec_ntt(&e);
+  polyvec_ntt_2(&e);
 
   // matrix-vector multiplication
   for(i=0;i<KYBER_K;i++) {
@@ -307,7 +307,7 @@ void indcpa_enc(uint8_t c[KYBER_INDCPA_BYTES],
     poly_getnoise_eta2(ep.vec+i, coins, nonce++);
   poly_getnoise_eta2(&epp, coins, nonce++);
 
-  polyvec_ntt(&sp);
+  polyvec_ntt_2(&sp);
 
   // matrix-vector multiplication
   for(i=0;i<KYBER_K;i++)
