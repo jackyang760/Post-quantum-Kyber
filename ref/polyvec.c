@@ -189,6 +189,13 @@ void polyvec_ntt(polyvec *r)
     poly_ntt(&r->vec[i]);
 }
 
+void polyvec_ntt_2(polyvec *r)
+{
+  unsigned int i;
+  for(i=0;i<KYBER_K;i++)
+    poly_ntt_2(&r->vec[i]);
+}
+
 /*************************************************
 * Name:        polyvec_invntt_tomont
 *
@@ -202,6 +209,13 @@ void polyvec_invntt_tomont(polyvec *r)
   unsigned int i;
   for(i=0;i<KYBER_K;i++)
     poly_invntt_tomont(&r->vec[i]);
+}
+
+void polyvec_invntt_toorigin(polyvec *r)
+{
+  unsigned int i;
+  for(i=0;i<KYBER_K;i++)
+    poly_invntt_tomont_2(&r->vec[i]);
 }
 
 /*************************************************

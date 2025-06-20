@@ -304,6 +304,12 @@ void poly_ntt(poly *r)
   poly_reduce(r);
 }
 
+void poly_ntt_2(poly *r)
+{
+  ntt_2(r->coeffs);
+  poly_reduce(r);
+}
+
 /*************************************************
 * Name:        poly_invntt_tomont
 *
@@ -316,6 +322,11 @@ void poly_ntt(poly *r)
 void poly_invntt_tomont(poly *r)
 {
   invntt(r->coeffs);
+}
+
+void poly_invntt_tomont_2(poly *r)
+{
+  invntt_2(r->coeffs);
 }
 
 /*************************************************

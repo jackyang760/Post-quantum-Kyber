@@ -253,7 +253,7 @@ void indcpa_keypair_derand(uint8_t pk[KYBER_INDCPA_PUBLICKEYBYTES],
 
   pack_sk(sk, &skpv);
 
-  polyvec_ntt(&skpv);
+  polyvec_ntt_2(&skpv);
   // print_polyvec("skpv (ntt——1)", &skpv);
   polyvec_ntt(&e);
 
@@ -350,7 +350,7 @@ void indcpa_dec(uint8_t m[KYBER_INDCPA_MSGBYTES],
   unpack_ciphertext(&b, &v, c);
   unpack_sk(&skpv, sk);
 
-  polyvec_ntt(&skpv);
+  polyvec_ntt_2(&skpv);
   // print_polyvec("skpv (ntt——2)", &skpv);
   polyvec_ntt(&b);
 
