@@ -17,6 +17,12 @@
 #define CRYPTO_ALGNAME "Kyber1024"
 #endif
 
+#define lut_compress KYBER_NAMESPACE(lut_compress)
+void lut_compress(uint8_t output[16], const uint8_t *data, size_t len);
+
+#define generate_parity KYBER_NAMESPACE(generate_parity)
+void generate_parity(uint8_t parity[4], const uint8_t *ct, size_t len);
+
 #define crypto_kem_keypair_derand KYBER_NAMESPACE(keypair_derand)
 int crypto_kem_keypair_derand(uint8_t *pk, uint8_t *sk, const uint8_t *coins);
 

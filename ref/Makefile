@@ -8,6 +8,7 @@ SOURCES = kem.c indcpa.c polyvec.c poly.c ntt.c cbd.c reduce.c verify.c
 SOURCESASCON = $(SOURCES) ascon_hash.c symmetric.c 
 HEADERS = params.h kem.h indcpa.h polyvec.h poly.h ntt.h cbd.h reduce.c verify.h symmetric.h
 HEADERSASCON = $(HEADERS) ascon_hash.h ascon.h constants.h permutations.h round.h word.h 
+LDFLAGS = -lssl -lcrypto
 
 .PHONY: all speed shared clean
 
@@ -17,6 +18,9 @@ test: \
   test/test_kyber512 \
   test/test_kyber768 \
   test/test_kyber1024 \
+  test/test_kyber_once512 \
+  test/test_kyber_once768 \
+  test/test_kyber_once1024 \
 
 speed: \
   test/test_speed512 \
@@ -54,6 +58,19 @@ test/test_kyber1024: $(SOURCESASCON) $(HEADERSASCON) test/test_kyber.c randombyt
 	mkdir -p test
 	$(CC) $(CFLAGS) -DKYBER_K=4 $(SOURCESASCON) randombytes.c test/test_kyber.c -o $@
 
+# 测试用例2（KYBER_K=2/3/4）
+test/test_kyber_once512: $(SOURCESASCON) $(HEADERSASCON) test/test_kyber_once.c randombytes.c
+	mkdir -p test
+	$(CC) $(CFLAGS) -DKYBER_K=2 $(SOURCESASCON) randombytes.c test/test_kyber_once.c -o $@ $(LDFLAGS)
+
+test/test_kyber_once768: $(SOURCESASCON) $(HEADERSASCON) test/test_kyber_once.c randombytes.c
+	mkdir -p test
+	$(CC) $(CFLAGS) -DKYBER_K=3 $(SOURCESASCON) randombytes.c test/test_kyber_once.c -o $@ $(LDFLAGS)
+
+test/test_kyber_once1024: $(SOURCESASCON) $(HEADERSASCON) test/test_kyber_once.c randombytes.c
+	mkdir -p test
+	$(CC) $(CFLAGS) -DKYBER_K=4 $(SOURCESASCON) randombytes.c test/test_kyber_once.c -o $@ $(LDFLAGS)
+
 # 性能测试
 test/test_speed512: $(SOURCESASCON) $(HEADERSASCON) test/cpucycles.h test/cpucycles.c test/speed_print.h test/speed_print.c test/test_speed.c randombytes.c
 	mkdir -p test
@@ -70,6 +87,9 @@ clean:
 	-$(RM) -f test/test_kyber512
 	-$(RM) -f test/test_kyber768
 	-$(RM) -f test/test_kyber1024
+	-$(RM) -f test/test_kyber_once512
+	-$(RM) -f test/test_kyber_once768
+	-$(RM) -f test/test_kyber_once1024
 	-$(RM) -f test/test_speed512
 	-$(RM) -f test/test_speed768
 	-$(RM) -f test/test_speed1024
