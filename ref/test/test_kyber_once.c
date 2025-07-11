@@ -13,6 +13,9 @@
 #define AES_IV_LEN 12   // GCM standard IV length
 #define AES_TAG_LEN 16  // GCM tag length
 #define HASH_SS_LEN 32  // SHA-256哈希长度
+#define RSA_CIPHERTEXT_LEN 256  // RSA 2048 的密文长度
+// #define RSA_CIPHERTEXT_LEN KYBER_POLYCOMPRESSEDBYTES  // RSA 2048 加密输出固定长度
+
 
 typedef struct {
   uint8_t kyber_pk[CRYPTO_PUBLICKEYBYTES];
@@ -27,7 +30,7 @@ typedef struct {
 // 添加这些原型声明
 int generate_hybrid_keypair(hybrid_publickey_t *hpk, hybrid_secretkey_t *hsk);
 int hybrid_encrypt(const hybrid_publickey_t *hpk, const uint8_t *plaintext, int plen,
-  uint8_t *out_ciphertext, int *outlen, uint8_t *iv, uint8_t *tag, uint8_t *ss_hash);
+  uint8_t *out_ciphertext, int *outlen, uint8_t *iv, uint8_t *tag);
 int hybrid_decrypt(const hybrid_secretkey_t *hsk, const uint8_t *cipher_in, int clen,
                     uint8_t *plaintext_out);
 
@@ -107,7 +110,7 @@ int generate_hybrid_keypair(hybrid_publickey_t *hpk, hybrid_secretkey_t *hsk) {
   // 1. Kyber生成密钥对
   crypto_kem_keypair(hpk->kyber_pk, hsk->kyber_sk);
 
-  printf("Phrase 1.1 : 接收方Alice生成抗量子公钥kyber_pk和私钥kyber_sk:\n");
+  printf("步骤 1.1 : 接收方Alice调用crypto_kem_keypair函数，生成抗量子公钥kyber_pk和私钥kyber_sk:\n"); 
   print_bytes("Kyber公钥pk", hpk->kyber_pk, CRYPTO_PUBLICKEYBYTES);
   print_bytes("Kyber私钥sk", hsk->kyber_sk, CRYPTO_SECRETKEYBYTES);
 
@@ -158,7 +161,7 @@ int generate_hybrid_keypair(hybrid_publickey_t *hpk, hybrid_secretkey_t *hsk) {
   }
   hpk->rsa_pk[len] = '\0';  // 确保以NULL结尾
 
-  printf("Phrase 1.2 : 接收方Alice生成RSA公钥rsa_pk和私钥rsa_sk:\n");
+  printf("步骤 1.2 : 接收方Alice调用OpenSSL库，生成RSA公钥rsa_pk和私钥rsa_sk:\n");
   printf("RSA公钥(pem格式):\n%s\n", hpk->rsa_pk);
   print_rsa_private_key(hsk->rsa_sk);
 
@@ -180,13 +183,48 @@ int generate_hybrid_keypair(hybrid_publickey_t *hpk, hybrid_secretkey_t *hsk) {
 
 */
 int hybrid_encrypt(const hybrid_publickey_t *hpk, const uint8_t *plaintext, int plen,
-  uint8_t *out_ciphertext, int *outlen, uint8_t *iv, uint8_t *tag, uint8_t *ss_hash_out) {
+  uint8_t *out_ciphertext, int *outlen, uint8_t *iv, uint8_t *tag) {
 
   uint8_t ss[CRYPTO_BYTES]; // Kyber 共享密钥
   uint8_t ct_kyber[CRYPTO_CIPHERTEXTBYTES];
-  uint8_t rsa_cipher[512]; // 临时 buffer 存 RSA 加密结果
+  uint8_t kyber_ct_cipher[256]; // 加密后的部分 ct_kyber
 
-  // 1. RSA 公钥加载
+  printf("要加密的消息: ");
+  fwrite(plaintext, 1, plen, stdout);
+  printf(" (%d 字节)\n", plen);
+
+  // === 1.Kyber 用公钥生成共享密钥 ss 和密文 ct_kyber ===
+
+  // Kyber利用公钥生成共享密钥获取共享密钥ss和对应密文ct_kyber
+  crypto_kem_enc(ct_kyber, ss, hpk->kyber_pk);
+
+  printf("步骤 2.1: 发送方Bob调用crypto_kem_enc函数，使用抗量子公钥kyber_pk加密共享密钥ss，获得抗量子密文ct_kyber\n");
+  print_bytes("共享密钥(ss)", ss, CRYPTO_BYTES);
+  print_bytes("Kyber密文(ct_kyber)", ct_kyber, CRYPTO_CIPHERTEXTBYTES);
+
+  // === 2.使用共享密钥ss加密原始消息 ===
+
+  // 生成随机的IV
+  if (RAND_bytes(iv, AES_IV_LEN) != 1) {
+    fprintf(stderr, "生成随机IV失败\n");
+    return -1;
+  }
+
+  //对称加密
+  int enc_len = aes_gcm_encrypt(plaintext, plen, ss, iv, out_ciphertext, tag);
+  if (enc_len < 0) {
+    fprintf(stderr, "AES-GCM加密消息失败\n");
+    return -1;
+  }
+
+  printf("步骤 2.2: 发送方Bob调用OpenSSL库，使用共享密钥ss对称加密原始消息，获得AES密文\n");
+  print_bytes("AES加密的消息", out_ciphertext, enc_len);
+  print_bytes("AES IV", iv, AES_IV_LEN);
+  print_bytes("AES TAG", tag, AES_TAG_LEN);
+
+  // === 3.使用RSA公钥部分加密对称密钥(ct_kyber) ===
+
+  // 加载RSA公钥
   BIO *bio = BIO_new_mem_buf(hpk->rsa_pk, -1);
   if (!bio) {
     fprintf(stderr, "创建BIO失败\n");
@@ -201,7 +239,7 @@ int hybrid_encrypt(const hybrid_publickey_t *hpk, const uint8_t *plaintext, int 
     return -1;
   }
   
-  // 2. RSA 公钥加密明文plaintext 获得密文rsa_cipher
+  // 使用RSA加密ct_kyber的后KYBER_POLYCOMPRESSEDBYTES个字节
   EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new(rsa_pub, NULL);
   if (!ctx) {
     fprintf(stderr, "创建EVP_PKEY_CTX失败\n");
@@ -215,9 +253,11 @@ int hybrid_encrypt(const hybrid_publickey_t *hpk, const uint8_t *plaintext, int 
     EVP_PKEY_free(rsa_pub);
     return -1;
   }
-  size_t rsa_len = sizeof(rsa_cipher);
-  if (EVP_PKEY_encrypt(ctx, rsa_cipher, &rsa_len, plaintext, plen) <= 0) {
-    fprintf(stderr, "RSA加密失败\n");
+
+  size_t ct_cipher_len = sizeof(kyber_ct_cipher);
+  // if (EVP_PKEY_encrypt(ctx, rsa_cipher, &rsa_len, ct_kyber + KYBER_POLYVECCOMPRESSEDBYTES, KYBER_POLYCOMPRESSEDBYTES) <= 0) {
+  if (EVP_PKEY_encrypt(ctx, kyber_ct_cipher, &ct_cipher_len, ct_kyber + KYBER_POLYVECCOMPRESSEDBYTES, KYBER_POLYCOMPRESSEDBYTES) <= 0) {
+    fprintf(stderr, "RSA加密共享密钥失败\n");
     EVP_PKEY_CTX_free(ctx);
     EVP_PKEY_free(rsa_pub);
     return -1;
@@ -226,49 +266,27 @@ int hybrid_encrypt(const hybrid_publickey_t *hpk, const uint8_t *plaintext, int 
   EVP_PKEY_CTX_free(ctx);
   EVP_PKEY_free(rsa_pub);
 
-  printf("Phrase 2.1 : 发送方Bob生成利用RSA公钥rsa_pk加密明文message获得密文rsa_cipher:\n");
-  print_bytes("密文rsa_cipher", rsa_cipher, rsa_len);
+  printf("步骤 2.3: 发送方Bob调用OpenSSL库，使用RSA公钥rsa_pk加密，加密共享密钥的密文ct_kyber\n");
+  print_bytes("RSA加密结果(RSA(Ct_kyber))", kyber_ct_cipher, ct_cipher_len);
+
+  // === 5. 封装: [AES加密的消息 | RSA(Ct_kyber) | IV | TAG] ===
+  uint8_t *p = out_ciphertext + enc_len ;
+  memcpy(p, ct_kyber, CRYPTO_CIPHERTEXTBYTES); // 添加 Ct_kyber
+
+  p += KYBER_POLYVECCOMPRESSEDBYTES;
+  memcpy(p, kyber_ct_cipher, ct_cipher_len); // 替换 Ct_kyber 后半部分为 RSA密文
   
-  // 3. Kyber 用公钥pk生成共享秘钥 ss 的密文ct_kyber
-  crypto_kem_enc(ct_kyber, ss, hpk->kyber_pk);
+  p += ct_cipher_len;
+  memcpy(p, iv, AES_IV_LEN); // 添加IV
 
-  printf("Phrase 2.2 : 发送方Bob生成利用抗量子公钥kyber_pk生成共享密钥ss以及共享密钥的密文ct_kyber:\n");
-  print_bytes("对称密钥ss", ss, CRYPTO_BYTES);
-  print_bytes("共享密钥的密文ct_kyber", ct_kyber, CRYPTO_CIPHERTEXTBYTES);
-
-  // 4. 为共享密钥ss生成SHA-256哈希
-  SHA256(ss, CRYPTO_BYTES, ss_hash_out);
-  printf("步骤 2.3: Bob计算共享密钥ss的哈希\n");
-  print_bytes("共享密钥哈希", ss_hash_out, HASH_SS_LEN);
-
-  // 5. 利用共享秘钥 ss 对称加密 RSA 密文 获得 out_ciphertext
-  int enc_len = aes_gcm_encrypt(rsa_cipher, rsa_len, ss, iv, out_ciphertext, tag);
-  if (enc_len < 0) {
-    fprintf(stderr, "AES-GCM加密失败\n");
-    return -1;
-  }
-
-  printf("Phrase 2.4 : 发送方Bob利用共享密钥ss对称加密RSA密文rsa_cipher获得AES加密的RSA密文out_ciphertext:\n");
-  print_bytes("AES加密的RSA密文out_ciphertext", out_ciphertext, enc_len);
-
-  /* 
-    6. 密文拼接: 
-    完整结构: 
-      [AES-GCM密文 | Kyber密文 | IV | TAG | SS_HASH]
-  */
-  uint8_t *p = out_ciphertext + enc_len;
-  memcpy(p, ct_kyber, CRYPTO_CIPHERTEXTBYTES);     // 添加Kyber密文
-  p += CRYPTO_CIPHERTEXTBYTES;
-  memcpy(p, iv, AES_IV_LEN);                      // 添加IV
   p += AES_IV_LEN;
-  memcpy(p, tag, AES_TAG_LEN);                    // 添加TAG
-  p += AES_TAG_LEN;
-  memcpy(p, ss_hash_out, HASH_SS_LEN);            // 添加ss的哈希
- 
-  *outlen = enc_len + CRYPTO_CIPHERTEXTBYTES + AES_IV_LEN + AES_TAG_LEN + HASH_SS_LEN;
+  memcpy(p, tag, AES_TAG_LEN); // 添加TAG
+  
+  *outlen = enc_len + KYBER_POLYVECCOMPRESSEDBYTES + ct_cipher_len + AES_IV_LEN + AES_TAG_LEN;
 
-  printf("Phrase 2.5 : 发送方Bob封装密钥格式为[ out_ciphertext | ct_kyber | IV | TAG | ss_Hash ]\n");
-  print_bytes("最终封装密钥", out_ciphertext, *outlen);
+  printf("步骤 2.4: 发送方Bob，封装所有密文发送给接收方Alice\n");
+  printf("封装格式: [AES加密的消息 | RSA(Ct_kyber) | IV | TAG]\n");
+  print_bytes("最终密文", out_ciphertext, *outlen);
 
   return 0;
 }
@@ -284,7 +302,7 @@ int hybrid_encrypt(const hybrid_publickey_t *hpk, const uint8_t *plaintext, int 
 int hybrid_decrypt(const hybrid_secretkey_t *hsk, const uint8_t *cipher_in, int clen,
    uint8_t *plaintext_out) {
 
-  int total_overhead = CRYPTO_CIPHERTEXTBYTES + AES_IV_LEN + AES_TAG_LEN + HASH_SS_LEN;
+  int total_overhead = KYBER_POLYVECCOMPRESSEDBYTES + RSA_CIPHERTEXT_LEN + AES_IV_LEN + AES_TAG_LEN;
   
   if (clen < total_overhead) {
     fprintf(stderr, "无效的消息长度: 消息太短\n");
@@ -292,85 +310,65 @@ int hybrid_decrypt(const hybrid_secretkey_t *hsk, const uint8_t *cipher_in, int 
   }
 
   uint8_t ss[CRYPTO_BYTES];
+  uint8_t ct_kyber[CRYPTO_CIPHERTEXTBYTES];
+  uint8_t kyber_ct_decrypted[512];
 
-  // 1.解包密文[out_ciphertext|ct_kyber|IV|TAG|ss_hash]
-  // 最后32字节是ss_hash
-  const uint8_t *ss_hash_ptr = cipher_in + clen - HASH_SS_LEN;
-  // 在ss_hash之前是TAG
-  const uint8_t *tag = ss_hash_ptr - AES_TAG_LEN;
-  // 在TAG之前是IV
-  const uint8_t *iv = tag - AES_IV_LEN;
-  // 在IV之前是Kyber密文
-  const uint8_t *ct_kyber = iv - CRYPTO_CIPHERTEXTBYTES;
-  //   开头是AES-GCM密文
-  const uint8_t *aes_ciphertext = cipher_in;
-  // AES加密部分长度
-  int aes_len = clen - total_overhead;  
+  // === 1. 拆封消息结构[AES加密的消息 | RSA(Ct_kyber) | IV | TAG] ===
+  int aes_msg_len = clen - total_overhead;  // AES加密的消息长度
+  const uint8_t *aes_cipher = cipher_in;    // 前段: AES加密的消息
+  const uint8_t *rsa_ct_kyber = cipher_in + aes_msg_len;  // 中段: RSA部分加密的ct_kyber
+  const uint8_t *iv = rsa_ct_kyber + KYBER_POLYVECCOMPRESSEDBYTES + RSA_CIPHERTEXT_LEN;      // IV紧随其后
+  const uint8_t *tag = iv + AES_IV_LEN;                 // TAG在最后
 
-  printf("Phrase 3.1 : 接收方Alice解包密钥:\n");
-  print_bytes("AES-GCM加密部分", cipher_in, aes_len);
-  print_bytes("Kyber密文", ct_kyber, CRYPTO_CIPHERTEXTBYTES);
+  printf("步骤 3.1 : 接收方Alice接收到密文并解包，密文结构：[AES加密的消息 | RSA(Ct_kyber) | IV | TAG] :\n");
+  print_bytes("AES加密消息长度", cipher_in, aes_msg_len);
+  print_bytes("RSA(Ct_kyber)", rsa_ct_kyber, KYBER_POLYVECCOMPRESSEDBYTES + RSA_CIPHERTEXT_LEN);
   print_bytes("AES IV", iv, AES_IV_LEN);
-  print_bytes("AES TAG ", tag, AES_TAG_LEN);
-  print_bytes("Kyber密钥哈希", ss_hash_ptr, HASH_SS_LEN);
+  print_bytes("AES TAG", tag, AES_TAG_LEN);
 
-  // 2. Kyber 解密出共享密钥 ss
-  crypto_kem_dec(ss, ct_kyber, hsk->kyber_sk); 
-  printf("Phrase 3.2 : 接收方Alice用Kyber私钥kyber_sk解密密文ct_kyber获得共享秘钥ss:\n");
-  print_bytes("对称密钥ss", ss, CRYPTO_BYTES);
-
-  // 3. 验证共享密钥哈希
-  uint8_t ss_hash_calc[HASH_SS_LEN];
-  SHA256(ss, CRYPTO_BYTES, ss_hash_calc);
-
-  printf("步骤 3.3 : Alice验证共享密钥哈希\n");
-  print_bytes("接收到的哈希", ss_hash_ptr, HASH_SS_LEN);
-  print_bytes("计算出的哈希", ss_hash_calc, HASH_SS_LEN);
-
-  if (memcmp(ss_hash_ptr, ss_hash_calc, HASH_SS_LEN) != 0) {
-    fprintf(stderr, "✘ 共享密钥哈希验证失败: 可能遭受中间人攻击!\n");
-    return -1;
-  }
-  printf("✓ 共享密钥哈希验证成功\n\n");
-
-  // 4. 使用共享密钥解AES密文得到RSA密文
-  uint8_t rsa_cipher[512] = {0};  // 初始化为0
-  int rsa_len = aes_gcm_decrypt(aes_ciphertext, aes_len, tag, ss, iv, rsa_cipher);
-  
-  if (rsa_len < 0) {
-    fprintf(stderr, "AES-GCM解密失败\n");
-    return -1;
-  }
-  
-  printf("Phrase 3.4 : 接收方Alice用共享密钥ss解密AES加密的RSA密文out_ciphertext获得RSA密文rsa_cipher:\n");
-  print_bytes("密文rsa_cipher", rsa_cipher, rsa_len);
-
-  // 5. 使用 RSA 私钥解密 得到明文ctx
+  // === 2. 使用RSA私钥解密密文RSA(ct_kyber)获得ct_kyber ===
   EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new(hsk->rsa_sk, NULL);
   if (!ctx) {
     fprintf(stderr, "创建EVP_PKEY_CTX失败\n");
     return -1;
   }
-  
+
   if (EVP_PKEY_decrypt_init(ctx) <= 0) {
     fprintf(stderr, "RSA解密初始化失败\n");
     EVP_PKEY_CTX_free(ctx);
     return -1;
   }
-  
-  size_t plen = 256;
-  if (EVP_PKEY_decrypt(ctx, plaintext_out, &plen, rsa_cipher, rsa_len) <= 0) {
+
+  size_t ct_len = sizeof(kyber_ct_decrypted);
+  if (EVP_PKEY_decrypt(ctx, kyber_ct_decrypted, &ct_len, rsa_ct_kyber + KYBER_POLYVECCOMPRESSEDBYTES, RSA_CIPHERTEXT_LEN) <= 0) {
     fprintf(stderr, "RSA解密失败\n");
     EVP_PKEY_CTX_free(ctx);
     return -1;
   }
-  
+
   EVP_PKEY_CTX_free(ctx);
 
-  printf("Phrase 3.5 : 接收方Alice用RSA私钥rsa_sk解密RSA密文，得到明文message:\n");
+  // 替换 Ct_kyber 后半部分为 RSA明文
+  memcpy(ct_kyber , rsa_ct_kyber, KYBER_POLYVECCOMPRESSEDBYTES);
+  memcpy(ct_kyber + KYBER_POLYVECCOMPRESSEDBYTES, kyber_ct_decrypted, KYBER_POLYCOMPRESSEDBYTES);
+
+  printf("步骤 3.2: 接收方Alice调用OpenSSL函数库，使用RSA私钥rsa_sk解密RSA(ct_kyber)\n");
+  print_bytes("Ct_kyber", ct_kyber, CRYPTO_CIPHERTEXTBYTES);
+
+  // === 3. 用Kyber私钥解封装ct_kyber获得共享密钥ss ===
+  crypto_kem_dec(ss, ct_kyber, hsk->kyber_sk); 
+  printf("步骤 3.3: 接收方Alice调用crypto_kem_dec函数，使用抗量子私钥kyber_sk解密密文ct_kyber，获得共享密钥ss\n");
+  print_bytes("对称密钥ss", ss, CRYPTO_BYTES);
+
+  // === 4. 使用ss解密消息 ===
+  int plen = aes_gcm_decrypt(aes_cipher, aes_msg_len, tag, ss, iv, plaintext_out);
+  if (plen < 0) {
+    fprintf(stderr, "AES-GCM解密失败\n");
+    return -1;
+  }
+
+  printf("步骤 3.4 : 接收方Alice调用OpenSSL函数库，使用共享密钥ss解密AES密文，得到明文message:\n");
   printf("\n恢复的消息: %s\n", plaintext_out);
-
-
   return plen;
 }
 
@@ -379,8 +377,8 @@ static int test_hybrid_keys(void)
   hybrid_publickey_t pubkey;
   hybrid_secretkey_t seckey;
   const char *msg = "Hybrid PQ + RSA test!";
-  uint8_t iv[AES_IV_LEN], tag[AES_TAG_LEN], ss_hash[HASH_SS_LEN];;
-  uint8_t ciphertext[2048], decrypted[512];
+  uint8_t ciphertext[2048], decrypted[256];
+  uint8_t iv[AES_IV_LEN], tag[AES_TAG_LEN];
   int clen = 0;
 
   // 生成kyber和RSA秘钥对
@@ -394,15 +392,9 @@ static int test_hybrid_keys(void)
 
   printf("原始消息: \"%s\"\n", msg);
 
-  // 生成随机IV
-  if (RAND_bytes(iv, AES_IV_LEN) != 1) {
-    fprintf(stderr, "生成随机IV失败\n");
-    return -1;
-  }
-
   // 混合加密
   if (hybrid_encrypt(&pubkey, (const uint8_t *)msg, strlen(msg),
-    ciphertext, &clen, iv, tag, ss_hash) != 0) {
+    ciphertext, &clen, iv, tag) != 0) {
     fprintf(stderr, "加密失败\n");
     return -1;
   }
@@ -444,14 +436,6 @@ int main(void)
   }
 
   printf("================== 测试完毕 ===================\n");
-
-  // printf("技术参数:\n");
-  // printf("CRYPTO_SECRETKEYBYTES:  %d\n",CRYPTO_SECRETKEYBYTES);
-  // printf("CRYPTO_PUBLICKEYBYTES:  %d\n",CRYPTO_PUBLICKEYBYTES);
-  // printf("CRYPTO_CIPHERTEXTBYTES: %d\n",CRYPTO_CIPHERTEXTBYTES);
-  // printf("AES_IV 长度:            %d\n", AES_IV_LEN); 
-  // printf("AES_TAG 长度:           %d\n", AES_TAG_LEN); 
-  // printf("SS_HASH 长度:           %d\n", HASH_SS_LEN);
   
   return 0;
 }

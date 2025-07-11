@@ -9,6 +9,7 @@
 #include "symmetric.h"
 #include "randombytes.h"
 #include <stdio.h>
+#include <stdlib.h>
 
 // 测试函数(打印公私钥)
 // void print_polyvec(const char* name, const polyvec *skpv) {
@@ -40,13 +41,12 @@
 *              const uint8_t *seed: pointer to the input public seed
 **************************************************/
 static void pack_pk(uint8_t r[KYBER_INDCPA_PUBLICKEYBYTES],
-                    polyvec *pk,
-                    const uint8_t seed[KYBER_SYMBYTES])
+  polyvec *pk,
+  const uint8_t seed[KYBER_SYMBYTES])
 {
-  polyvec_tobytes_pk(r, pk);
+  polyvec_tobytes(r, pk);
   memcpy(r+KYBER_POLYVECBYTES, seed, KYBER_SYMBYTES);
 }
-
 /*************************************************
 * Name:        unpack_pk
 *
@@ -58,12 +58,13 @@ static void pack_pk(uint8_t r[KYBER_INDCPA_PUBLICKEYBYTES],
 *              - const uint8_t *packedpk: pointer to input serialized public key
 **************************************************/
 static void unpack_pk(polyvec *pk,
-                      uint8_t seed[KYBER_SYMBYTES],
-                      const uint8_t packedpk[KYBER_INDCPA_PUBLICKEYBYTES])
+  uint8_t seed[KYBER_SYMBYTES],
+  const uint8_t packedpk[KYBER_INDCPA_PUBLICKEYBYTES])
 {
-  polyvec_frombytes_pk(pk, packedpk);
+  polyvec_frombytes(pk, packedpk);
   memcpy(seed, packedpk+KYBER_POLYVECBYTES, KYBER_SYMBYTES);
 }
+
 
 /*************************************************
 * Name:        pack_sk
@@ -73,9 +74,9 @@ static void unpack_pk(polyvec *pk,
 * Arguments:   - uint8_t *r: pointer to output serialized secret key
 *              - polyvec *sk: pointer to input vector of polynomials (secret key)
 **************************************************/
-static void pack_sk(uint8_t r[SMALL_POLYVECBYTES], polyvec *sk)
+static void pack_sk(uint8_t r[KYBER_INDCPA_SECRETKEYBYTES], polyvec *sk)
 {
-  polyvec_tobytes_sk(r, sk);
+  polyvec_tobytes(r, sk);
 }
 /*************************************************
 * Name:        unpack_sk
@@ -85,9 +86,9 @@ static void pack_sk(uint8_t r[SMALL_POLYVECBYTES], polyvec *sk)
 * Arguments:   - polyvec *sk: pointer to output vector of polynomials (secret key)
 *              - const uint8_t *packedsk: pointer to input serialized secret key
 **************************************************/
-static void unpack_sk(polyvec *sk, const uint8_t packedsk[SMALL_POLYVECBYTES])
+static void unpack_sk(polyvec *sk, const uint8_t packedsk[KYBER_INDCPA_SECRETKEYBYTES])
 {
-  polyvec_frombytes_sk(sk, packedsk);
+  polyvec_frombytes(sk, packedsk);
 }
 
 /*************************************************
@@ -180,39 +181,49 @@ static unsigned int rej_uniform(int16_t *r,
 
 #define GEN_MATRIX_NBLOCKS ((12*KYBER_N/8*(1 << 12)/KYBER_Q + XOF_BLOCKBYTES)/XOF_BLOCKBYTES)
 // Not static for benchmarking
+// 优化后的 gen_matrix 函数（使用批量挤压）
 void gen_matrix(polyvec *a, const uint8_t seed[KYBER_SYMBYTES], int transposed)
 {
-  unsigned int ctr, i, j;
-  unsigned int buflen;
-
-  uint8_t buf[GEN_MATRIX_NBLOCKS*XOF_BLOCKBYTES];
-
-  uint8_t extseed[KYBER_SYMBYTES+3]; 
-  memcpy(extseed, seed, KYBER_SYMBYTES); 
-
-  for(i=0;i<KYBER_K;i++) {
-    for(j=0;j<KYBER_K;j++) {  
-      if(transposed){
-        extseed[KYBER_SYMBYTES] = i; 
-        extseed[KYBER_SYMBYTES + 1] = j; 
-      } else {
-        extseed[KYBER_SYMBYTES] = j;
-        extseed[KYBER_SYMBYTES + 1] = i;
-      }
-      extseed[KYBER_SYMBYTES + 2] = 0; // 第34字节为计数器（初始为0）
-      xof_ascon(buf, GEN_MATRIX_NBLOCKS*XOF_BLOCKBYTES, extseed, KYBER_SYMBYTES + 3);// 使用扩展种子调用SM3-XOF
-      buflen = GEN_MATRIX_NBLOCKS*XOF_BLOCKBYTES;
-      
-      ctr = rej_uniform(a[i].vec[j].coeffs, KYBER_N, buf, buflen);
-
-      while(ctr < KYBER_N) {
-        extseed[KYBER_SYMBYTES + 2]++;
-        xof_ascon(buf, XOF_BLOCKBYTES, extseed, KYBER_SYMBYTES + 3);
-        buflen = XOF_BLOCKBYTES;
-        ctr += rej_uniform(a[i].vec[j].coeffs + ctr, KYBER_N - ctr, buf, buflen);
-      }
+    unsigned int ctr, i, j;
+    size_t buf_size = GEN_MATRIX_NBLOCKS * XOF_BLOCKBYTES;
+    
+    // 使用单一缓冲区减少内存分配
+    uint8_t *buf = malloc(buf_size);
+    if(buf == NULL) return;
+    
+    for(i = 0; i < KYBER_K; i++) {
+        for(j = 0; j < KYBER_K; j++) {
+            ascon_state_t state;  
+            
+            // 优化1: 使用批量初始化
+            if(transposed)
+                ascon_xof_init(&state, seed, ((uint16_t)i << 8) | j);
+            else
+                ascon_xof_init(&state, seed, ((uint16_t)j << 8) | i);
+            
+            // 优化2: 一次性生成所有块
+            ascon_xof_squeezeblocks(&state, buf, GEN_MATRIX_NBLOCKS);
+            
+            ctr = rej_uniform(a[i].vec[j].coeffs, KYBER_N, buf, buf_size);
+            
+            // 优化3: 高效处理剩余采样（罕见情况）
+            while(ctr < KYBER_N) {
+                uint8_t overflow_block[XOF_BLOCKBYTES];
+                
+                // 仅生成必要的字节
+                size_t needed = (KYBER_N - ctr) * 3; // 每个系数约需3字节
+                needed = (needed < XOF_BLOCKBYTES) ? needed : XOF_BLOCKBYTES;
+                
+                ascon_xof_squeezeblocks(&state, overflow_block, needed);
+                
+                ctr += rej_uniform(a[i].vec[j].coeffs + ctr, 
+                                  KYBER_N - ctr, 
+                                  overflow_block, 
+                                  needed);
+            }
+        }
     }
-  }
+    free(buf);
 }
 
 /*************************************************
@@ -229,7 +240,7 @@ void gen_matrix(polyvec *a, const uint8_t seed[KYBER_SYMBYTES], int transposed)
 *                             (of length KYBER_SYMBYTES bytes)
 **************************************************/
 void indcpa_keypair_derand(uint8_t pk[KYBER_INDCPA_PUBLICKEYBYTES],
-                           uint8_t sk[SMALL_INDCPA_SECRETKEYBYTES],
+                           uint8_t sk[KYBER_INDCPA_SECRETKEYBYTES],
                            const uint8_t coins[KYBER_SYMBYTES])
 {
   unsigned int i;
@@ -242,7 +253,7 @@ void indcpa_keypair_derand(uint8_t pk[KYBER_INDCPA_PUBLICKEYBYTES],
   memcpy(buf, coins, KYBER_SYMBYTES);
   buf[KYBER_SYMBYTES] = KYBER_K;
   buf[KYBER_SYMBYTES+1] = 0x01;
-  hash_g(buf, buf, KYBER_SYMBYTES+2);
+  hash_g_P12(buf, buf, KYBER_SYMBYTES+2); // 可用P12
 
   gen_a(a, publicseed);
 
@@ -250,8 +261,6 @@ void indcpa_keypair_derand(uint8_t pk[KYBER_INDCPA_PUBLICKEYBYTES],
     poly_getnoise_eta1(&skpv.vec[i], noiseseed, nonce++);
   for(i=0;i<KYBER_K;i++)
     poly_getnoise_eta1(&e.vec[i], noiseseed, nonce++);
-
-  pack_sk(sk, &skpv);
 
   polyvec_ntt_2(&skpv);
   // print_polyvec("skpv (ntt——1)", &skpv);
@@ -266,6 +275,7 @@ void indcpa_keypair_derand(uint8_t pk[KYBER_INDCPA_PUBLICKEYBYTES],
   polyvec_add(&pkpv, &pkpv, &e);
   polyvec_reduce(&pkpv);
 
+  pack_sk(sk, &skpv);
   pack_pk(pk, &pkpv, publicseed);
 }
 
@@ -342,15 +352,14 @@ void indcpa_enc(uint8_t c[KYBER_INDCPA_BYTES],
 **************************************************/
 void indcpa_dec(uint8_t m[KYBER_INDCPA_MSGBYTES],
                 const uint8_t c[KYBER_INDCPA_BYTES],
-                const uint8_t sk[SMALL_INDCPA_SECRETKEYBYTES])
+                const uint8_t sk[KYBER_INDCPA_SECRETKEYBYTES])
 {
   polyvec b, skpv;
   poly v, mp;
 
   unpack_ciphertext(&b, &v, c);
   unpack_sk(&skpv, sk);
-
-  polyvec_ntt_2(&skpv);
+  
   // print_polyvec("skpv (ntt——2)", &skpv);
   polyvec_ntt(&b);
 

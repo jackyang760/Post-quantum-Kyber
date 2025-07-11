@@ -121,10 +121,13 @@ int crypto_kem_keypair_derand(uint8_t *pk,
                               const uint8_t *coins)
 {
   indcpa_keypair_derand(pk, sk, coins);
-  memcpy(sk+SMALL_POLYVECBYTES, pk, KYBER_PUBLICKEYBYTES);
-  hash_h(sk+SMALL_SECRETKEYBYTES-2*KYBER_SYMBYTES, pk, KYBER_PUBLICKEYBYTES);
+  memcpy(sk+KYBER_POLYVECBYTES, pk, KYBER_PUBLICKEYBYTES);
+
+  lut_compress(sk+KYBER_INDCPA_SECRETKEYBYTES + KYBER_INDCPA_PUBLICKEYBYTES, pk, KYBER_PUBLICKEYBYTES);
+  generate_parity(sk+KYBER_INDCPA_SECRETKEYBYTES + KYBER_INDCPA_PUBLICKEYBYTES + KYBER_LUTBYTES, pk, KYBER_PUBLICKEYBYTES);
+  
   /* Value z for pseudo-random output on reject */
-  memcpy(sk+SMALL_SECRETKEYBYTES-KYBER_SYMBYTES, coins+KYBER_SYMBYTES, KYBER_SYMBYTES);
+  memcpy(sk+KYBER_SECRETKEYBYTES-KYBER_SYMBYTES, coins+KYBER_SYMBYTES, KYBER_SYMBYTES);
   return 0;
 }
 
@@ -172,7 +175,7 @@ int crypto_kem_enc_derand(uint8_t *ct,
                           const uint8_t *pk,
                           const uint8_t *coins)
 {
-  uint8_t buf[2*KYBER_SYMBYTES+1];
+  uint8_t buf[KYBER_SYMBYTES + 1 + KYBER_LUTBYTES + KYBER_PARITYBYTES];
   /* Will contain key, coins */
   uint8_t kr[2*KYBER_SYMBYTES];
 
@@ -182,8 +185,12 @@ int crypto_kem_enc_derand(uint8_t *ct,
   /* Multitarget countermeasure for coins + contributory KEM */
   // hash_h(buf+KYBER_SYMBYTES, pk, KYBER_PUBLICKEYBYTES);
   hash_h(buf+KYBER_SYMBYTES+1, pk, KYBER_PUBLICKEYBYTES);
+
+  lut_compress(buf+KYBER_SYMBYTES + 1, pk, KYBER_PUBLICKEYBYTES);
+  generate_parity(buf+KYBER_SYMBYTES + 1 + KYBER_LUTBYTES, pk, KYBER_PUBLICKEYBYTES);
+
   // hash_g(kr, buf, 2*KYBER_SYMBYTES);
-  hash_g(kr, buf, 2*KYBER_SYMBYTES+1);
+  hash_g(kr, buf, KYBER_SYMBYTES + 1 + KYBER_LUTBYTES + KYBER_PARITYBYTES);
 
   // printf("加密明文\n");
   // print_buf_prefix(buf, 32);
@@ -191,16 +198,8 @@ int crypto_kem_enc_derand(uint8_t *ct,
   /* coins are in kr+KYBER_SYMBYTES */
   indcpa_enc(ct, buf, pk, kr+KYBER_SYMBYTES);
 
-  kr[KYBER_SYMBYTES] = 0x03;
-
-  // 步骤1: LUT压缩替代哈希
-  lut_compress(kr+KYBER_SYMBYTES+1, ct, KYBER_CIPHERTEXTBYTES);
-
-  // 步骤2: 生成奇偶校验
-  generate_parity(kr+KYBER_SYMBYTES+17, ct, KYBER_CIPHERTEXTBYTES);
-
-  //kdf(ss, kr, 2*KYBER_SYMBYTES);
-  kdf(ss, kr, KYBER_SYMBYTES+21);
+  memcpy(ss,kr,KYBER_SYMBYTES);
+  // kr的前32字节作为共享密钥
 
   memset(buf, 0, sizeof(buf));
   memset(kr, 0, sizeof(kr));
@@ -255,12 +254,12 @@ int crypto_kem_dec(uint8_t *ss,
                    const uint8_t *sk)
 {
   int fail;
-  uint8_t buf[2*KYBER_SYMBYTES+1];
+  uint8_t buf[KYBER_SYMBYTES + 1 + KYBER_LUTBYTES + KYBER_PARITYBYTES];
   /* Will contain key, coins */
   uint8_t kr[2*KYBER_SYMBYTES];
-//  uint8_t cmp[KYBER_CIPHERTEXTBYTES+KYBER_SYMBYTES];
+  // uint8_t cmp[KYBER_CIPHERTEXTBYTES+KYBER_SYMBYTES];
   uint8_t cmp[KYBER_CIPHERTEXTBYTES];
-  const uint8_t *pk = sk+SMALL_INDCPA_SECRETKEYBYTES;
+  const uint8_t *pk = sk+KYBER_INDCPA_SECRETKEYBYTES;
 
   indcpa_dec(buf, ct, sk);
 
@@ -270,25 +269,17 @@ int crypto_kem_dec(uint8_t *ss,
   /* Multitarget countermeasure for coins + contributory KEM */
   buf[KYBER_SYMBYTES] = 0x02;
   // memcpy(buf+KYBER_SYMBYTES, sk+SMALL_SECRETKEYBYTES-2*KYBER_SYMBYTES, KYBER_SYMBYTES);
-  memcpy(buf+KYBER_SYMBYTES+1, sk+SMALL_SECRETKEYBYTES-2*KYBER_SYMBYTES, KYBER_SYMBYTES);
-  hash_g(kr, buf, 2*KYBER_SYMBYTES+1);
+  memcpy(buf+KYBER_SYMBYTES + 1, sk + KYBER_INDCPA_SECRETKEYBYTES + KYBER_INDCPA_PUBLICKEYBYTES, KYBER_LUTBYTES + KYBER_PARITYBYTES);
+  hash_g(kr, buf, KYBER_SYMBYTES + 1 + KYBER_LUTBYTES + KYBER_PARITYBYTES);
 
   /* coins are in kr+KYBER_SYMBYTES */
   indcpa_enc(cmp, buf, pk, kr+KYBER_SYMBYTES);
 
   fail = verify(ct, cmp, KYBER_CIPHERTEXTBYTES);
 
-  kr[KYBER_SYMBYTES] = 0x03;
+  rkprf(ss,sk+KYBER_SECRETKEYBYTES-KYBER_SYMBYTES,ct);
 
-  lut_compress(kr+KYBER_SYMBYTES+1, ct, KYBER_CIPHERTEXTBYTES);
-  
-  generate_parity(kr+KYBER_SYMBYTES+17, ct, KYBER_CIPHERTEXTBYTES);
-
-  kdf(buf, kr, KYBER_SYMBYTES+21);
-
-  rkprf(ss,sk+SMALL_SECRETKEYBYTES-KYBER_SYMBYTES,ct);
-
-  cmov(ss,buf,KYBER_SYMBYTES,!fail);
+  cmov(ss,kr,KYBER_SYMBYTES,!fail);
 
   memset(buf, 0, sizeof(buf));
   memset(kr, 0, sizeof(kr));

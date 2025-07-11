@@ -136,20 +136,12 @@ void polyvec_decompress(polyvec *r, const uint8_t a[KYBER_POLYVECCOMPRESSEDBYTES
 *                            (needs space for KYBER_POLYVECBYTES)
 *              - const polyvec *a: pointer to input vector of polynomials
 **************************************************/
-void polyvec_tobytes_pk(uint8_t r[KYBER_POLYVECBYTES], const polyvec *a)
+void polyvec_tobytes(uint8_t r[KYBER_POLYVECBYTES], const polyvec *a)
 {
   unsigned int i;
   for(i=0;i<KYBER_K;i++)
-    poly_tobytes_pk(r+i*KYBER_POLYBYTES, &a->vec[i]);
+    poly_tobytes(r+i*KYBER_POLYBYTES, &a->vec[i]);
 }
-
-void polyvec_tobytes_sk(uint8_t r[SMALL_POLYVECBYTES],const polyvec *sk) {
-  unsigned int i;
-  for (i=0;i<KYBER_K;i++) {
-    poly_tobytes_sk(&r[i*96], &sk->vec[i]);
-  }
-}
-
 /*************************************************
 * Name:        polyvec_frombytes
 *
@@ -160,21 +152,12 @@ void polyvec_tobytes_sk(uint8_t r[SMALL_POLYVECBYTES],const polyvec *sk) {
 *              - const polyvec *a: pointer to input vector of polynomials
 *                                  (of length KYBER_POLYVECBYTES)
 **************************************************/
-void polyvec_frombytes_pk(polyvec *r, const uint8_t a[KYBER_POLYVECBYTES])
+void polyvec_frombytes(polyvec *r, const uint8_t a[KYBER_POLYVECBYTES])
 {
   unsigned int i;
   for(i=0;i<KYBER_K;i++)
-    poly_frombytes_pk(&r->vec[i], a+i*KYBER_POLYBYTES);
+    poly_frombytes(&r->vec[i], a+i*KYBER_POLYBYTES);
 }
-
-void polyvec_frombytes_sk(polyvec *sk, const uint8_t packedsk[SMALL_POLYVECBYTES]) {
-  unsigned int i;
-  for (i=0; i<KYBER_K; i++) {
-    poly_frombytes_sk(&sk->vec[i], &packedsk[i*SMALL_POLYBYTES]);
-  }
-}
-
-
 /*************************************************
 * Name:        polyvec_ntt
 *

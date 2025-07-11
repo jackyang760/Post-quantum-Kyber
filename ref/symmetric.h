@@ -19,6 +19,7 @@ void ascon_rkprf(unsigned char* out, unsigned long long outlen,
 
 #define hash_h(OUT, IN, INBYTES) ascon_hash_32(OUT, IN, INBYTES)
 #define hash_g(OUT, IN, INBYTES) ascon_hash_64(OUT, IN, INBYTES)
+#define hash_g_P12(OUT, IN, INBYTES) ascon_hash_64_P12(OUT, IN, INBYTES)
 
 #define kdf(OUT, IN, INBYTES) ascon_xof(OUT, KYBER_SSBYTES, IN, INBYTES)
 #define xof_ascon(OUT, OUTLEN, EXTSEED, LEN) ascon_xof(OUT, OUTLEN, EXTSEED, LEN)
